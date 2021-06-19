@@ -1,0 +1,142 @@
+---
+title: "EC525 Project 1"
+author: "Matt McCoy"
+date: "4/21/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+## Install the pacman package if necessary
+if (!require("pacman")) install.packages("pacman")
+## Install other packages using pacman::p_load()
+pacman::p_load(tidyverse, haven, sandwich, lmtest, stargazer, dplyr, ggplot2, broom)
+
+ohp <- read_dta(file = "~/Documents/teaching/ec-425_525/project01/data/ohp.dta")
+
+```
+
+```{r}
+
+#Subsets the data to the variables xvar1, xvar2, and xvar3 for observations with treatment equal to 0.
+
+ohp_cntrl <- subset(ohp, treatment ==0, select =
+c(edu_inp, age_inp, gender_inp, hispanic_inp, race_black_inp, race_nwother_inp, race_white_inp))
+
+#Report summary statistics for the dataframe
+summary(ohp_cntrl)
+
+```
+
+
+```{r variable means}
+#make table of means for variables of interest for control, treatment, and overall.
+library(boot)
+library(table1)
+table1(~  edu_inp + age_inp + gender_inp + hispanic_inp + race_black_inp + race_white_inp | treatment, data=ohp)
+```
+
+
+```{r}
+#subset the data so we only have our variables of interest
+table1 <- ohp %>%
+  group_by(treatment) %>% 
+  select(edu_inp, age_inp, gender_inp, hispanic_inp, race_black_inp, race_nwother_inp, race_white_inp) %>%
+  summarise(education = mean(edu_inp, na.rm = TRUE),
+            age = mean(age_inp, na.rm = TRUE),
+           gender = mean(gender_inp, na.rm = TRUE),
+           hispanic = mean(hispanic_inp, na.rm = TRUE),
+           black = mean(race_black_inp, na.rm = TRUE),
+           other = mean(race_nwother_inp, na.rm = TRUE),
+           white = mean(race_white_inp, na.rm = TRUE))
+table1
+#pivot the wide data into long format
+table2 <- table1 %>% pivot_longer(!treatment, names_to = "variable", values_to = "mean") 
+
+#view table
+library(huxtable)
+
+huxtable(table2)
+
+```
+
+```{r}
+#Regress variable of interest on treatment
+edu_reg <- lm(edu_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "education")
+age_reg <- lm(age_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "age")
+gender_reg <- lm(gender_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "gender")
+hispanic_reg <- lm(hispanic_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "hispanic")
+black_reg <- lm(race_black_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "black")
+other_reg <- lm(race_nwother_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "other")
+white_reg <- lm(race_white_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "white")
+
+#bind regression results
+regs <- bind_rows(edu_reg, age_reg, gender_reg, hispanic_reg, black_reg, other_reg, white_reg)
+
+merge <- regs %>%
+  mutate(difference = estimate) %>% 
+  filter(term == "treatment") %>% 
+  select(variable, difference, std.error)
+
+#join tables
+first_table <- left_join(table2, merge, by = "variable")
+
+#view table
+huxtable(first_table)
+```
+
+
+```{r compliance rate}
+# compliance regression
+mod2 <- lm(ohp_all_ever_survey ~ treatment, data = ohp)
+
+#view results for compliance rate
+stargazer(mod2, type = 'text')
+#compliance rate = .254 or 25.4%
+```
+
+```{r}
+#take difference of post and pre treatment variables
+ohp$dep_difference <-(ohp$dep_dx_post_lottery - ohp$dep_dx_pre_lottery)
+ohp$dia_difference <-(ohp$dia_dx_post_lottery - ohp$dia_dx_pre_lottery)
+ohp$hbp_difference <-(ohp$hbp_dx_post_lottery - ohp$hbp_dx_pre_lottery)
+
+#regress health outcomes on treatment
+bp_mod <- lm(bp_sar_inp ~ treatment, data = ohp) 
+visits_mod <- lm(doc_num_mod_inp ~ treatment, data = ohp)
+rx_mod <- lm(rx_num_mod_inp ~ treatment, data = ohp)
+dep_mod <- lm(dep_difference ~ treatment, data = ohp)
+chol_mod <- lm(chl_inp ~ treatment, data = ohp) 
+dia_mod <- lm(dia_difference ~ treatment, data = ohp)
+hbp_mod <- lm(hbp_difference ~ treatment, data = ohp)
+
+#view  results for ITT values
+stargazer(bp_mod, visits_mod, rx_mod, dep_mod, chol_mod, dia_mod, hbp_mod, type = 'text')
+```
+
+```{r}
+bp_mod2 <- lm(bp_sar_inp ~ treatment, data = ohp)  %>% tidy() %>% mutate(variable = "bp") 
+visits_mod2 <- lm(doc_num_mod_inp ~ treatment, data = ohp) %>% tidy()%>% mutate(variable = "visits")
+rx_mod2 <- lm(rx_num_mod_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "prescriptions")
+dep_mod2 <- lm(dep_difference ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "depression")
+chol_mod2 <- lm(chl_inp ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "cholesterol")
+dia_mod2 <- lm(dia_difference ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "diabetes")
+hbp_mod2 <- lm(hbp_difference ~ treatment, data = ohp) %>% tidy() %>% mutate(variable = "hypertension")
+
+#bind regression results
+atet <- bind_rows(bp_mod2, visits_mod2, rx_mod2, dep_mod2, chol_mod2, dia_mod2, hbp_mod2)
+
+merge2 <- atet %>%
+  filter(term == "treatment") %>% 
+  select(variable, estimate, std.error)
+
+#calculate ATET = ITT/compliance rate
+atet_final <- merge2 %>% mutate(ATET = estimate/.254)
+huxtable(atet_final)
+```
+
